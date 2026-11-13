@@ -1,0 +1,55 @@
+name: Volumi in seduta
+
+# Ogni 20 minuti dalle 7 alle 21 UTC (8-22 in inverno, 9-23 in estate, ora italiana), lun-ven.
+# Lo script controlla da solo quali borse sono aperte: Europa 9:00-17:30, USA 15:30-22:00 (ora italiana);
+# fuori orario finisce in pochi secondi senza pubblicare nulla.
+on:
+  schedule:
+    - cron: "7,27,47 7-21 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "normale, forza (anche a mercato chiuso) o ricostruisci (storico simulato)"
+        default: "normale"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: volumi
+  cancel-in-progress: false
+
+jobs:
+  volumi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # volume medio per fascia oraria: calcolato una volta al giorno e tenuto nella cache di GitHub
+      - uses: actions/cache@v5
+        with:
+          path: cache
+          key: profili-${{ github.run_id }}
+          restore-keys: profili-
+      - name: Controllo
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          case "${{ github.event.inputs.modo }}" in
+            forza) python volumi.py --forza ;;
+            ricostruisci) python volumi.py --ricostruisci ;;
+            *) python volumi.py ;;
+          esac
+      - name: Pubblica
+        run: |
+          git config user.name "dati-mercato"
+          git config user.email "actions@users.noreply.github.com"
+          git add data
+          git diff --cached --quiet && exit 0
+          git commit -m "Volumi in seduta $(date -u +%Y-%m-%dT%H:%MZ)"
+          for i in 1 2 3 4 5; do git pull --rebase -q && git push -q && exit 0; sleep $((i * 5)); done
+          exit 1

@@ -47,5 +47,7 @@ jobs:
           git config user.name "dati-mercato"
           git config user.email "actions@users.noreply.github.com"
           git add data
-          git diff --cached --quiet || git commit -m "Dati di mercato $(date -u +%Y-%m-%dT%H:%MZ)"
-          git push
+          git diff --cached --quiet && exit 0
+          git commit -m "Dati di mercato $(date -u +%Y-%m-%dT%H:%MZ)"
+          for i in 1 2 3 4 5; do git pull --rebase -q && git push -q && exit 0; sleep $((i * 5)); done
+          exit 1
