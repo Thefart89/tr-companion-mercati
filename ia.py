@@ -10,11 +10,13 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
 MODEL = "claude-opus-5-5"
-GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash"]   # alias aggiornato da Google, poi riserva
+# alias aggiornato da Google, poi riserve (la "lite" e' la meno richiesta quando Google e' sovraccarico)
+GEMINI_MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
 SYSTEM = """Sei un analista di mercato che scrive in italiano semplice per un risparmiatore che non è un esperto.
 Ricevi dati JSON raccolti stamattina: mercati esteri, una stima automatica dell'apertura di Milano, appuntamenti
@@ -80,22 +82,31 @@ def commento_gemini(payload: dict) -> dict | None:
         "generationConfig": {"responseMimeType": "application/json", "responseSchema": _gemini_schema(SCHEMA),
                              "maxOutputTokens": 16000},
     }).encode()
+    # Ogni modello: fino a 3 tentativi se Google e' sovraccarico (503/500/429) o non risponde;
+    # poi si passa al modello successivo. Chiave non valida o richiesta errata: stop subito.
     for model in GEMINI_MODELS:
-        req = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-            data=body, method="POST", headers={"Content-Type": "application/json", "x-goog-api-key": key})
-        try:
-            with urllib.request.urlopen(req, timeout=180) as r:
-                d = json.loads(r.read())
-        except urllib.error.HTTPError as e:
-            msg = e.read().decode(errors="replace")[:300]
-            print(f"IA Gemini ({model}): errore {e.code}: {msg}", file=sys.stderr)
-            if e.code == 404:          # modello non disponibile: si prova il successivo
-                continue
-            return None
-        except Exception as e:  # rete, timeout
-            print(f"IA Gemini ({model}): {e}", file=sys.stderr)
-            return None
+        d = None
+        for tentativo in range(3):
+            if tentativo:
+                time.sleep(20 * tentativo)
+            req = urllib.request.Request(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                data=body, method="POST", headers={"Content-Type": "application/json", "x-goog-api-key": key})
+            try:
+                with urllib.request.urlopen(req, timeout=180) as r:
+                    d = json.loads(r.read())
+                break
+            except urllib.error.HTTPError as e:
+                msg = " ".join(e.read().decode(errors="replace").split())[:200]
+                print(f"IA Gemini ({model}): errore {e.code}: {msg}", file=sys.stderr)
+                if e.code == 404:          # modello non disponibile: si prova il successivo
+                    break
+                if e.code not in (429, 500, 502, 503, 504):
+                    return None
+            except Exception as e:  # rete, timeout
+                print(f"IA Gemini ({model}): {e}", file=sys.stderr)
+        if d is None:
+            continue
         try:
             cand = d["candidates"][0]
             text = "".join(p.get("text", "") for p in cand["content"]["parts"])
