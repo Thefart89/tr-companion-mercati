@@ -1,0 +1,51 @@
+name: Dati di mercato
+
+on:
+  schedule:
+    - cron: "17 5 * * 1-5"    # mattina: 6:17 in inverno, 7:17 in estate (ora italiana)
+    - cron: "47 6 * * 1-5"    # riserva, se GitHub ha saltato il primo orario
+    - cron: "53 16 * * 1-5"   # sera: dopo la chiusura delle borse europee
+  workflow_dispatch:
+    inputs:
+      run:
+        description: "mattina o sera"
+        default: "mattina"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mercati
+  cancel-in-progress: false
+
+jobs:
+  dati:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HAS_CLAUDE: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Librerie
+        if: ${{ env.HAS_CLAUDE == 'true' }}
+        run: pip install "anthropic>=1,<2"
+      - name: Calcolo
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then RUN="${{ github.event.inputs.run }}"
+          elif [ "${{ github.event.schedule }}" = "53 16 * * 1-5" ]; then RUN=sera
+          elif [ "${{ github.event.schedule }}" = "47 6 * * 1-5" ]; then RUN="mattina --se-manca"
+          else RUN=mattina; fi
+          python lavoro.py $RUN
+      - name: Pubblica
+        run: |
+          git config user.name "dati-mercato"
+          git config user.email "actions@users.noreply.github.com"
+          git add data
+          git diff --cached --quiet || git commit -m "Dati di mercato $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push
