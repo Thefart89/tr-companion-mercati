@@ -9,6 +9,7 @@ Scrive (pubblici, senza dati personali):
     data/titoli.json    analisi tecnica di ~600 titoli e degli indici
     data/mercato.json   quadro del mattino, notizie, volumi anomali, calendario, commento IA
     data/storico.json   previsioni passate e risultato reale (per misurarne l'affidabilita')
+    data/eventi.json    prossimi conti trimestrali e stacchi di dividendo (solo mattina)
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ from pathlib import Path
 import ia
 import notizie
 import previsioni
-from fonti import charts, rome
+from fonti import calendario_titoli, charts, rome
 from tecnica import analyze, r4
 
 HERE = Path(__file__).resolve().parent
@@ -85,6 +86,26 @@ def run(kind: str, out: Path, use_ia: bool) -> None:
     # ---------- volumi anomali (ultima seduta chiusa) ----------
     anom = sorted((dict(s=s, **{k: x.get(k) for k in ("n", "g", "vr", "vol", "vavg60", "ch1", "c", "d", "cur")})
                    for s, x in stocks.items() if (x.get("vr") or 0) >= SOGLIA_VOLUMI), key=lambda x: -x["vr"])[:MAX_ANOMALIE]
+
+    # ---------- conti trimestrali e dividendi in arrivo (solo mattina) ----------
+    if kind == "mattina":
+        t0 = time.time()
+        cal = calendario_titoli(list(stocks))
+        ev = {}
+        for s, c in cal.items():
+            e = {}
+            fut = [t for t in c.get("earn", []) if t >= now - 86400]         # anche ieri: reazione al mercato oggi
+            if fut and min(fut) <= now + 60 * 86400:
+                e["earn"] = min(fut)
+            if c.get("exdiv") and now - 86400 <= c["exdiv"] <= now + 60 * 86400:
+                e["exdiv"] = c["exdiv"]
+            if e:
+                if c.get("div_anno"):
+                    e["div_anno"] = c["div_anno"]
+                ev[s] = e
+        print(f"Calendario societario: {len(cal)}/{len(stocks)} titoli, {len(ev)} con eventi nei prossimi 60 giorni, {time.time() - t0:.0f}s")
+        if cal:          # se Yahoo non risponde si tiene il file precedente
+            save(out / "eventi.json", {"generated": now, "date": rome(now), "eventi": ev})
 
     # ---------- notizie ----------
     items = notizie.collect(now)

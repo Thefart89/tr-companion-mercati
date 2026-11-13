@@ -99,9 +99,34 @@ def cumulato(barre: list) -> list[float]:
 
 
 def profilo(serie: dict, oggi: str) -> dict | None:
-    """Volume medio CUMULATO alla fine di ogni barra da 15 minuti, sulle sedute passate (oggi escluso)."""
+    """Volume medio CUMULATO alla fine di ogni barra da 15 minuti, sulle sedute passate (oggi escluso),
+    piu' la media delle ultime 20 chiusure (per la conferma di tendenza)."""
     g = giorni_di(serie)
-    return media_profilo([cumulato(b) for d, b in sorted(g.items()) if d != oggi])
+    passati = [b for d, b in sorted(g.items()) if d != oggi]
+    p = media_profilo([cumulato(b) for b in passati])
+    if p:
+        p["m20"] = media20([b[-1][1] for b in passati])
+    return p
+
+
+def media20(chiusure: list[float]) -> float | None:
+    return round(sum(chiusure[-20:]) / 20, 4) if len(chiusure) >= 20 else None
+
+
+def conferme(ch: float, idx: float | None, prezzo: float, m20: float | None) -> list[str]:
+    """Conferme del segnale, misurate a parte nello storico (simulazione del 14/11 sulle 34 sedute precedenti:
+    segnali 'in seduta' con entrambe 19 casi, 89% proseguiti; campione piccolo, da verificare con i dati veri).
+      indice:   il titolo fa almeno 1 punto % meglio (o peggio, se scende) del suo indice
+      tendenza: il prezzo e' dal lato giusto della media delle ultime 20 chiusure"""
+    if not ch:
+        return []
+    sgn = 1 if ch > 0 else -1
+    out = []
+    if idx is not None and (ch - idx) * sgn >= 1:
+        out.append("indice")
+    if m20 and (prezzo - m20) * sgn > 0:
+        out.append("tendenza")
+    return out
 
 
 def media_profilo(cum: list[list[float]]) -> dict | None:
@@ -157,7 +182,7 @@ def run(out: Path, cache: Path, forza: bool) -> None:
         for s in stato.get("segnali", []):
             if s.get("p1") and s.get("p"):
                 dopo = (s["p"] / s["p1"] - 1) * 100
-                storico.append({"date": stato["date"], **{k: s.get(k) for k in ("s", "n", "g", "m", "tipo", "t1", "r1", "p1", "ch1", "idx1", "p", "ch", "idx", "r")},
+                storico.append({"date": stato["date"], **{k: s.get(k) for k in ("s", "n", "g", "m", "tipo", "conf", "t1", "r1", "p1", "ch1", "idx1", "p", "ch", "idx", "r")},
                                 "dopo": r4(dopo),          # movimento dopo il segnale, fino alla chiusura
                                 "continua": (dopo > 0) == (s["ch1"] > 0) and dopo != 0})
         storico = storico[-1500:]
@@ -240,7 +265,8 @@ def run(out: Path, cache: Path, forza: bool) -> None:
                           "vol": vol, "att": round(att), "avvisato": False,
                           # "apertura": entro la prima ora (di solito notizie/trimestrali, prezzo gia' mosso);
                           # "seduta": dopo la prima ora. Nello storico i due tipi si misurano a parte.
-                          "tipo": "apertura" if trascorsi < PRIMA_ORA else "seduta"}
+                          "tipo": "apertura" if trascorsi < PRIMA_ORA else "seduta",
+                          "conf": conferme(ch, idx_ch.get(g), prezzo, p.get("m20"))}
                 nuovi.append(sig[s])
         chiuso = now > end + 15 * 60       # i dati arrivano con ~15 minuti di ritardo
         stato["mercati"][mk] = {"nome": M["nome"], "stato": "chiuso" if now > end else "aperto", "apre": start, "chiude": end,
@@ -257,8 +283,11 @@ def run(out: Path, cache: Path, forza: bool) -> None:
             idx = f", indice {fmt(s['idx1'])}%" if s.get("idx1") is not None else ""
             volte = f"{s['r1']:.1f}".replace(".", ",")
             quando = "in apertura" if s.get("tipo") == "apertura" else "in seduta"
-            righe.append(f"• {s['n']} ({s['s']}), {quando}: volumi {volte} volte il normale a quest'ora"
-                         + f", prezzo {fmt(s['ch1'])}%{idx} — {verso}")
+            conf = s.get("conf") or []
+            extra = "".join([" ✓ più forte dell'indice" if "indice" in conf else "", " ✓ nel verso della tendenza" if "tendenza" in conf else ""])
+            stella = "⭐ " if s.get("tipo") == "seduta" and len(conf) == 2 else "• "
+            righe.append(f"{stella}{s['n']} ({s['s']}), {quando}: volumi {volte} volte il normale a quest'ora"
+                         + f", prezzo {fmt(s['ch1'])}%{idx} — {verso}{extra}")
         testo = "📊 Volumi anomali adesso (dati con ~15 min di ritardo)\n" + "\n".join(righe) + "\nNon è un consiglio: valuta tu."
         if telegram(testo):
             for s in da_avvisare:
@@ -286,6 +315,9 @@ def ricostruisci(out: Path) -> None:
                 if m["s"] not in info:
                     membri.append(m["s"]); info[m["s"]] = (m["n"], g, mk)
     raw = charts(membri, "60d", "15m")
+    rif = {g: uni[g]["index"] for g in uni}
+    ix_raw = charts(list(rif.values()), "60d", "15m")
+    ixg = {g: giorni_di(ix_raw[x]) for g, x in rif.items() if x in ix_raw}
     oggi = rome(time.time())
     sim = []
     for s, d in raw.items():
@@ -293,10 +325,15 @@ def ricostruisci(out: Path) -> None:
         giorni = giorni_di(d)
         chiavi = sorted(giorni)
         cums = [cumulato(giorni[k]) for k in chiavi]
+        chiusure = [giorni[k][-1][1] for k in chiavi]
         for j, k in enumerate(chiavi):
             if j < 25 or k == oggi:
                 continue
             prof = media_profilo(cums[max(0, j - 60):j])
+            m20 = media20(chiusure[:j])
+            ig = ixg.get(g, {})
+            ixc = {ts: c for ts, c, _ in ig.get(k, [])}
+            iprev = ig[chiavi[j - 1]][-1][1] if chiavi[j - 1] in ig else None
             if not prof:
                 continue
             barre = giorni[k]
@@ -311,9 +348,11 @@ def ricostruisci(out: Path) -> None:
                 p1 = barre[min(i + 1, len(barre) - 1)][1]
                 ch1 = (c / prec - 1) * 100
                 dopo = (fine / p1 - 1) * 100
+                idx1 = (ixc[ts] / iprev - 1) * 100 if iprev and ts in ixc else None
                 sim.append({"date": k, "s": s, "n": n, "g": g, "m": mk, "t1": ts + BARRA, "r1": r4(acc / att), "p1": p1,
                             "ch1": r4(ch1), "p": fine, "ch": r4((fine / prec - 1) * 100), "dopo": r4(dopo),
                             "continua": (dopo > 0) == (ch1 > 0) and dopo != 0,
+                            "idx1": r4(idx1) if idx1 is not None else None, "conf": conferme(ch1, idx1, c, m20),
                             "tipo": "apertura" if trascorsi < PRIMA_ORA else "seduta", "sim": True})
                 break
     vero = [x for x in load(out / "segnali_storico.json", []) if not x.get("sim")]

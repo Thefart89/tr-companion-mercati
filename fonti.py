@@ -92,3 +92,57 @@ def rome_offset(ts: float) -> int:
 def rome(ts: float, fmt: str = "%Y-%m-%d") -> str:
     import datetime as dt
     return dt.datetime.fromtimestamp(ts + rome_offset(ts), dt.timezone.utc).strftime(fmt)
+
+
+# ---------------- calendario societario (conti trimestrali, dividendi) ----------------
+def _yahoo_crumb():
+    """Sessione Yahoo con cookie e 'crumb': serve per l'interfaccia quoteSummary (date dei conti e dei dividendi)."""
+    import http.cookiejar
+    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    try:
+        op.open(urllib.request.Request("https://fc.yahoo.com", headers={"User-Agent": UA}), timeout=20)
+    except Exception:
+        pass        # risponde 404 ma imposta comunque il cookie
+    crumb = op.open(urllib.request.Request("https://query1.finance.yahoo.com/v1/test/getcrumb",
+                                           headers={"User-Agent": UA}), timeout=20).read().decode()
+    return op, crumb
+
+
+def calendario_titoli(symbols: list[str], workers: int = 6) -> dict[str, dict]:
+    """{simbolo: {earn: [ts...], exdiv: ts, divdate: ts, div_anno: importo}} (solo i campi presenti)."""
+    try:
+        op, crumb = _yahoo_crumb()
+    except Exception as e:
+        print(f"Calendario societario non disponibile: {e}")
+        return {}
+    res: dict[str, dict] = {}
+
+    def one(s: str) -> None:
+        url = (f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{urllib.parse.quote(s)}"
+               f"?modules=calendarEvents,summaryDetail&crumb={urllib.parse.quote(crumb)}")
+        for i in range(2):
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": UA})
+                r = json.loads(op.open(req, timeout=20).read())["quoteSummary"]["result"][0]
+                break
+            except Exception:
+                time.sleep(2 + 3 * i)
+        else:
+            return
+        ce, sd = r.get("calendarEvents") or {}, r.get("summaryDetail") or {}
+        out = {}
+        earn = [e.get("raw") for e in (ce.get("earnings") or {}).get("earningsDate") or [] if e.get("raw")]
+        if earn:
+            out["earn"] = earn
+        for k, src in (("exdiv", ce.get("exDividendDate")), ("divdate", ce.get("dividendDate"))):
+            if isinstance(src, dict) and src.get("raw"):
+                out[k] = src["raw"]
+        rate = (sd.get("dividendRate") or {}).get("raw")
+        if rate:
+            out["div_anno"] = rate
+        if out:
+            res[s] = out
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        list(ex.map(one, symbols))
+    return res
