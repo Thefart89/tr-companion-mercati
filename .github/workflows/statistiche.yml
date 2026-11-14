@@ -1,0 +1,37 @@
+name: Statistiche storiche
+
+on:
+  schedule:
+    - cron: "17 5 * * 6"     # sabato mattina: le statistiche cambiano lentamente
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dati
+  cancel-in-progress: false
+
+jobs:
+  calcolo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Calcolo
+        run: python statistiche.py
+      - name: Pubblica
+        run: |
+          git config user.name "tr-companion-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/statistiche.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Statistiche storiche $(date -u +%Y-%m-%d)"
+          for i in 1 2 3 4 5; do
+            git pull --rebase && git push && exit 0
+            sleep $((i * 7))
+          done
+          exit 1
