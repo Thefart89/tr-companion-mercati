@@ -151,8 +151,9 @@ def commento_gemini(payload: dict, system: str = SYSTEM, schema: dict = SCHEMA) 
                     break
                 if e.code not in (429, 500, 502, 503, 504):
                     return None
-            except Exception as e:  # rete, timeout
+            except Exception as e:  # rete, timeout: senza risposta in 3 minuti si passa subito al modello successivo
                 print(f"IA Gemini ({model}): {e}", file=sys.stderr)
+                break
         if d is None:
             continue
         try:
