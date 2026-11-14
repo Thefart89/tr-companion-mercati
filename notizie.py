@@ -25,6 +25,18 @@ FEEDS = [
     ("Corriere della Sera", "https://xml2.corriereobjects.it/rss/economia.xml", "it"),
 ]
 
+# Notizie internazionali (richiesta del 14/11): si mostrano SOLO tradotte dall'IA, che scarta anche i doppioni
+# di quelle gia' raccontate dai giornali italiani. Senza IA non compaiono.
+FEEDS_EST = [
+    ("CNBC", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114", "en"),
+    ("MarketWatch", "https://feeds.content.dowjones.io/public/rss/mw_topstories", "en"),
+    ("Wall Street Journal", "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", "en"),
+    ("Bloomberg", "https://feeds.bloomberg.com/markets/news.rss", "en"),
+    ("Financial Times", "https://www.ft.com/markets?format=rss", "en"),
+    ("BBC", "https://feeds.bbci.co.uk/news/business/rss.xml", "en"),
+    ("Google News", "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en", "en"),
+]
+
 # parole che rendono una notizia rilevante per i mercati (peso)
 KEYWORDS = {
     "bce": 3, "fed": 3, "tassi": 3, "rates": 2, "inflazione": 3, "inflation": 3, "pil": 2, "gdp": 2,
@@ -82,9 +94,9 @@ def score(item: dict, now: float) -> float:
     return s + max(0, 6 - age_h / 4)  # piu' recente = meglio (fino a ~24 ore)
 
 
-def collect(now: float, max_age_h: float = 30) -> list[dict]:
+def collect(now: float, max_age_h: float = 30, feeds: list | None = None) -> list[dict]:
     items: list[dict] = []
-    for name, url, lang in FEEDS:
+    for name, url, lang in (feeds or FEEDS):
         try:
             items += parse_feed(get(url, timeout=15, tries=2), name, lang)
         except Exception:

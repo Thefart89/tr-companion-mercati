@@ -33,11 +33,6 @@ SCHEMA = {
     "type": "object",
     "properties": {
         "sintesi": {"type": "string", "description": "4-6 frasi: cosa aspettarsi oggi sui mercati, a partire da Milano"},
-        "notizie": {"type": "array", "description": "Le notizie più importanti di oggi, al massimo 8, in ordine di importanza",
-                    "items": {"type": "object", "properties": {
-                        "indice": {"type": "integer", "description": "posizione della notizia nella lista ricevuta"},
-                        "perche": {"type": "string", "description": "una frase: perché conta per i mercati"}},
-                        "required": ["indice", "perche"], "additionalProperties": False}},
         "anomalie": {"type": "array", "items": {"type": "object", "properties": {
             "simbolo": {"type": "string"}, "commento": {"type": "string", "description": "1-2 frasi: possibile motivo dei volumi"}},
             "required": ["simbolo", "commento"], "additionalProperties": False}},
@@ -47,9 +42,62 @@ SCHEMA = {
                        "commento": {"type": "string", "description": "1-2 frasi: lettura tecnica e livelli da osservare"}},
                        "required": ["simbolo", "commento"], "additionalProperties": False}},
     },
-    "required": ["sintesi", "notizie", "anomalie", "titoli"],
+    "required": ["sintesi", "anomalie", "titoli"],
     "additionalProperties": False,
 }
+
+# ---------- notizie: commento sotto ogni notizia + notizie internazionali tradotte (richiesta del 14/11) ----------
+SYSTEM_NEWS = """Sei un analista di mercato che scrive in italiano semplice per un risparmiatore italiano che non è un esperto
+e che investe in certificati a leva su azioni (soprattutto italiane) e indici.
+Ricevi due liste di notizie di oggi: "italiane" (giornali italiani) e "estere" (giornali internazionali, in inglese),
+ognuna con titolo, fonti e a volte una breve descrizione.
+
+Compiti:
+1. Per OGNI notizia italiana scrivi un commento: le possibili conseguenze sui mercati (quali settori, titoli, indici,
+   tassi, spread, valute o materie prime potrebbero muoversi, in che direzione e perché).
+2. Indica le notizie italiane più importanti per chi investe oggi (al massimo 8, in ordine di importanza).
+3. Dalle notizie estere scegli quelle rilevanti per i mercati (al massimo 10, in ordine di importanza) e SCARTA
+   quelle che raccontano un fatto già presente tra le notizie italiane (stesso evento, anche con parole diverse),
+   le notizie di costume, sport o cronaca senza effetti sui mercati, e i doppioni tra loro.
+   Per ognuna: titolo tradotto in italiano naturale, una frase che riassume il fatto, e il commento come al punto 1.
+
+Regole:
+- Usa solo le informazioni ricevute: non inventare numeri, dichiarazioni o fatti che non sono nel titolo o nella descrizione.
+- Usa il condizionale e indica l'incertezza ("potrebbe", "di solito"); se l'effetto è probabilmente piccolo, dillo.
+- Mai consigli di comprare o vendere.
+- Commenti di 1-2 frasi brevi, niente gergo (se usi un termine tecnico spiegalo in poche parole).
+- Nomi di aziende e persone come nell'originale; numeri in formato italiano (1.234,5)."""
+
+SCHEMA_NEWS = {
+    "type": "object",
+    "properties": {
+        "importanti": {"type": "array", "description": "indici delle notizie italiane più importanti, in ordine, al massimo 8",
+                       "items": {"type": "integer"}},
+        "italiane": {"type": "array", "description": "un elemento per ogni notizia italiana ricevuta",
+                     "items": {"type": "object", "properties": {
+                         "indice": {"type": "integer"},
+                         "commento": {"type": "string", "description": "1-2 frasi: possibili effetti sui mercati"}},
+                         "required": ["indice", "commento"], "additionalProperties": False}},
+        "estere": {"type": "array", "description": "notizie estere rilevanti e non già presenti tra le italiane, al massimo 10, in ordine di importanza",
+                   "items": {"type": "object", "properties": {
+                       "indice": {"type": "integer", "description": "posizione nella lista estera ricevuta"},
+                       "titolo": {"type": "string", "description": "titolo tradotto in italiano"},
+                       "sintesi": {"type": "string", "description": "una frase in italiano: il fatto"},
+                       "commento": {"type": "string", "description": "1-2 frasi: possibili effetti sui mercati"}},
+                       "required": ["indice", "titolo", "sintesi", "commento"], "additionalProperties": False}},
+    },
+    "required": ["importanti", "italiane", "estere"],
+    "additionalProperties": False,
+}
+
+
+def notizie(payload: dict) -> dict | None:
+    """Commento a ogni notizia italiana, scelta delle piu' importanti, notizie estere tradotte senza doppioni."""
+    if os.environ.get("GEMINI_API_KEY"):
+        return commento_gemini(payload, SYSTEM_NEWS, SCHEMA_NEWS)
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return commento_claude(payload, SYSTEM_NEWS, SCHEMA_NEWS)
+    return None
 
 
 def commento(payload: dict) -> dict | None:
@@ -74,12 +122,12 @@ def _gemini_schema(x):
     return x
 
 
-def commento_gemini(payload: dict) -> dict | None:
+def commento_gemini(payload: dict, system: str = SYSTEM, schema: dict = SCHEMA) -> dict | None:
     key = os.environ["GEMINI_API_KEY"]
     body = json.dumps({
-        "systemInstruction": {"parts": [{"text": SYSTEM}]},
+        "systemInstruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": json.dumps(payload, ensure_ascii=False)}]}],
-        "generationConfig": {"responseMimeType": "application/json", "responseSchema": _gemini_schema(SCHEMA),
+        "generationConfig": {"responseMimeType": "application/json", "responseSchema": _gemini_schema(schema),
                              "maxOutputTokens": 16000},
     }).encode()
     # Ogni modello: fino a 3 tentativi se Google e' sovraccarico (503/500/429) o non risponde;
@@ -121,7 +169,7 @@ def commento_gemini(payload: dict) -> dict | None:
     return None
 
 
-def commento_claude(payload: dict) -> dict | None:
+def commento_claude(payload: dict, system: str = SYSTEM, schema: dict = SCHEMA) -> dict | None:
     try:
         import anthropic
     except ImportError:
@@ -134,8 +182,8 @@ def commento_claude(payload: dict) -> dict | None:
             max_tokens=16000,
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",          # se il modello rifiuta, l'API riprova da sola con un altro modello
-            output_config={"effort": "medium", "format": {"type": "json_schema", "schema": SCHEMA}},
-            system=SYSTEM,
+            output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
+            system=system,
             messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
         )
     except anthropic.AuthenticationError:

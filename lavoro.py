@@ -111,6 +111,7 @@ def run(kind: str, out: Path, use_ia: bool) -> None:
     # ---------- notizie ----------
     items = notizie.collect(now)
     top = notizie.cluster(items, now)
+    top_est = notizie.cluster(notizie.collect(now, feeds=notizie.FEEDS_EST), now, top=30)
     targets = [(s, short_name(info.get(s, stocks.get(s, {})).get("n", s)), uni[stocks[s]["g"]]["lang"])
                for s in [m["s"] for m in uni["FTSEMIB"]["members"]] + [a["s"] for a in anom[:15]] if s in stocks]
     targets = list(dict.fromkeys(targets))
@@ -158,12 +159,39 @@ def run(kind: str, out: Path, use_ia: bool) -> None:
             ai["date"] = today
         print("Commento IA:", "sì" if ai else "no")
 
+    # commento sotto ogni notizia e notizie estere tradotte (mattina e sera: le notizie cambiano)
+    estere = []
+    if use_ia and top:
+        nia = ia.notizie({
+            "oggi": today,
+            "italiane": [{"indice": i, "titolo": n["t"], "fonti": n["fonti"], "descrizione": n["desc"][:200]} for i, n in enumerate(top)],
+            "estere": [{"indice": i, "titolo": n["t"], "fonti": n["fonti"], "descrizione": n["desc"][:200]} for i, n in enumerate(top_est)],
+        })
+        if nia:
+            for c in nia.get("italiane", []):
+                if 0 <= c.get("indice", -1) < len(top) and c.get("commento"):
+                    top[c["indice"]]["commento"] = c["commento"].strip()
+            for r, i in enumerate(dict.fromkeys(nia.get("importanti", []))):
+                if 0 <= i < len(top) and r < 8:
+                    top[i]["imp"] = r + 1
+            for c in nia.get("estere", [])[:10]:
+                i = c.get("indice", -1)
+                if not (0 <= i < len(top_est)) or not c.get("titolo"):
+                    continue
+                o = top_est[i]
+                estere.append({"t": c["titolo"].strip(), "t_orig": o["t"], "sintesi": (c.get("sintesi") or "").strip(),
+                               "commento": (c.get("commento") or "").strip(), "src": o["src"], "fonti": o["fonti"],
+                               "url": o["url"], "ts": o["ts"], "lang": "en"})
+            print(f"Notizie IA ({nia.get('modello')}): {sum(1 for n in top if n.get('commento'))}/{len(top)} commentate, "
+                  f"{len(estere)}/{len(top_est)} estere tradotte, token {nia.get('costo_token')}")
+        else:
+            print("Notizie IA: no")
     for n in top:
         n.pop("desc", None)
     save(out / "mercato.json", {
         "generated": now, "run": kind, "date": today, "soglia_volumi": SOGLIA_VOLUMI,
         "macro": mac, "outlook": look, "calendario": events, "notizie": top, "anomalie": anom,
-        "notizie_titoli": company, "ia": ai,
+        "notizie_titoli": company, "ia": ai, "notizie_estere": estere,
     })
     print(f"Fatto: {len(stocks)} titoli, {len(anom)} volumi anomali, {len(top)} notizie, {len(events)} eventi.")
 
