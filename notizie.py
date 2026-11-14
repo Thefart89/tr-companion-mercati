@@ -20,9 +20,9 @@ FEEDS = [
     ("la Repubblica", "https://www.repubblica.it/rss/economia/rss2.0.xml", "it"),
     ("Investing.com", "https://it.investing.com/rss/news.rss", "it"),
     ("Google News", "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it", "it"),
-    ("Google News", "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en", "en"),
-    ("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html", "en"),
-    ("MarketWatch", "https://feeds.content.dowjones.io/public/rss/mw_topstories", "en"),
+    # mercati esteri raccontati dalla stampa italiana (scelta dell'utente 14/11: notizie solo in italiano)
+    ("Google News", "https://news.google.com/rss/search?q=borse+OR+%22wall+street%22+OR+fed+OR+bce+OR+spread+when:1d&hl=it&gl=IT&ceid=IT:it", "it"),
+    ("Corriere della Sera", "https://xml2.corriereobjects.it/rss/economia.xml", "it"),
 ]
 
 # parole che rendono una notizia rilevante per i mercati (peso)
@@ -123,11 +123,10 @@ def cluster(items: list[dict], now: float, top: int = 25) -> list[dict]:
 
 
 def company_news(name: str, lang: str, now: float, n: int = 3) -> list[dict]:
-    """Ultime notizie su un'azienda (Google News)."""
-    if lang == "it":
-        q, loc = f'"{name}" azioni OR borsa', "hl=it&gl=IT&ceid=IT:it"
-    else:
-        q, loc = f'"{name}" stock OR shares', "hl=en-US&gl=US&ceid=US:en"
+    """Ultime notizie su un'azienda (Google News, edizione italiana anche per i titoli esteri)."""
+    q = f'"{name}" azioni OR borsa' if lang == "it" else f'"{name}" azioni OR titolo OR "wall street"'
+    loc = "hl=it&gl=IT&ceid=IT:it"
+    lang = "it"
     url = f"https://news.google.com/rss/search?q={urllib.parse.quote(q)}+when:3d&{loc}"
     try:
         items = parse_feed(get(url, timeout=15, tries=2), "Google News", lang)

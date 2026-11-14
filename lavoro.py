@@ -23,7 +23,7 @@ from pathlib import Path
 import ia
 import notizie
 import previsioni
-from fonti import calendario_titoli, charts, rome
+from fonti import calendario_titoli, charts, giorno_di_borsa, rome
 from tecnica import analyze, r4
 
 HERE = Path(__file__).resolve().parent
@@ -103,9 +103,10 @@ def run(kind: str, out: Path, use_ia: bool) -> None:
                 if c.get("div_anno"):
                     e["div_anno"] = c["div_anno"]
                 ev[s] = e
+        target = {s: c["target"] for s, c in cal.items() if c.get("target")}
         print(f"Calendario societario: {len(cal)}/{len(stocks)} titoli, {len(ev)} con eventi nei prossimi 60 giorni, {time.time() - t0:.0f}s")
         if cal:          # se Yahoo non risponde si tiene il file precedente
-            save(out / "eventi.json", {"generated": now, "date": rome(now), "eventi": ev})
+            save(out / "eventi.json", {"generated": now, "date": rome(now), "eventi": ev, "target": target})
 
     # ---------- notizie ----------
     items = notizie.collect(now)
@@ -127,6 +128,7 @@ def run(kind: str, out: Path, use_ia: bool) -> None:
     if kind == "mattina":
         look = previsioni.outlook(now, mac, indices.get("FTSEMIB.MI"), events)
         look["date"] = today
+        look["borsa_aperta"] = giorno_di_borsa(today)     # weekend e festivi: l'app non le mostra come "di oggi"
         storico = [r for r in storico if r.get("date") != today] + [{"date": today, "gap_est": look["gap_pct"], "label": look["label"]}]
     else:
         look = merc.get("outlook")

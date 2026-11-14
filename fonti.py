@@ -109,7 +109,10 @@ def _yahoo_crumb():
 
 
 def calendario_titoli(symbols: list[str], workers: int = 6) -> dict[str, dict]:
-    """{simbolo: {earn: [ts...], exdiv: ts, divdate: ts, div_anno: importo}} (solo i campi presenti)."""
+    """{simbolo: {earn: [ts...], exdiv: ts, divdate: ts, div_anno: importo,
+                  target: {m, med, lo, hi, n, rec, rec_m}}} (solo i campi presenti).
+    target = prezzo obiettivo a 12 mesi degli analisti (media, mediana, minimo, massimo, numero di analisti)
+    e consenso (rec: strong_buy/buy/hold/underperform/sell; rec_m: 1 = comprare ... 5 = vendere)."""
     try:
         op, crumb = _yahoo_crumb()
     except Exception as e:
@@ -119,7 +122,7 @@ def calendario_titoli(symbols: list[str], workers: int = 6) -> dict[str, dict]:
 
     def one(s: str) -> None:
         url = (f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{urllib.parse.quote(s)}"
-               f"?modules=calendarEvents,summaryDetail&crumb={urllib.parse.quote(crumb)}")
+               f"?modules=calendarEvents,summaryDetail,financialData&crumb={urllib.parse.quote(crumb)}")
         for i in range(2):
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": UA})
@@ -129,8 +132,14 @@ def calendario_titoli(symbols: list[str], workers: int = 6) -> dict[str, dict]:
                 time.sleep(2 + 3 * i)
         else:
             return
-        ce, sd = r.get("calendarEvents") or {}, r.get("summaryDetail") or {}
+        ce, sd, fd = r.get("calendarEvents") or {}, r.get("summaryDetail") or {}, r.get("financialData") or {}
         out = {}
+        raw = lambda k: (fd.get(k) or {}).get("raw") if isinstance(fd.get(k), dict) else None
+        n = raw("numberOfAnalystOpinions")
+        if raw("targetMeanPrice") and n:
+            out["target"] = {"m": raw("targetMeanPrice"), "med": raw("targetMedianPrice"), "lo": raw("targetLowPrice"),
+                             "hi": raw("targetHighPrice"), "n": n, "rec": fd.get("recommendationKey"),
+                             "rec_m": raw("recommendationMean")}
         earn = [e.get("raw") for e in (ce.get("earnings") or {}).get("earningsDate") or [] if e.get("raw")]
         if earn:
             out["earn"] = earn
@@ -146,3 +155,31 @@ def calendario_titoli(symbols: list[str], workers: int = 6) -> dict[str, dict]:
     with ThreadPoolExecutor(max_workers=workers) as ex:
         list(ex.map(one, symbols))
     return res
+
+
+# ---------------- giorni di apertura di Borsa Italiana ----------------
+def _pasqua(y: int):
+    import datetime as dt
+    a, b, c = y % 19, y // 100, y % 100
+    d, e = b // 4, b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = c // 4, c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    mese = (h + l - 7 * m + 114) // 31
+    giorno = ((h + l - 7 * m + 114) % 31) + 1
+    return dt.date(y, mese, giorno)
+
+
+def giorno_di_borsa(data: str) -> bool:
+    """True se Borsa Italiana e' aperta in quella data (AAAA-MM-GG): niente weekend e festivita' di borsa
+    (1/1, Venerdi' Santo, Pasquetta, 1/5, 15/8, 24-26/12, 31/12)."""
+    import datetime as dt
+    d = dt.date.fromisoformat(data)
+    if d.weekday() >= 5:
+        return False
+    p = _pasqua(d.year)
+    chiusi = {(1, 1), (5, 1), (8, 15), (12, 24), (12, 25), (12, 26), (12, 31)}
+    return (d.month, d.day) not in chiusi and d not in (p - dt.timedelta(days=2), p + dt.timedelta(days=1))
