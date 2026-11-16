@@ -1,1 +1,1 @@
-{"date":"2026-11-14","segnali":[],"mercati":{"eu":{"nome":"Europa","stato":"chiuso oggi"},"us":{"nome":"USA","stato":"chiuso oggi"}},"generated":1794610921.3825622,"soglia":5.0}
+{"date":"2026-11-16","segnali":[],"mercati":{"eu":{"nome":"Europa","stato":"aperto","apre":1794816000,"chiude":1794846600,"controllo":1794822247.311255,"dati_fino":1794822247,"titoli":85,"indici":{"FTSEMIB":-0.4063,"SX5E":-0.1047},"finale":false},"us":{"nome":"USA","stato":"non ancora aperto","apre":1794839400,"chiude":1794862800}},"generated":1794822247.311255,"soglia":5.0}
