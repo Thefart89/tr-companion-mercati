@@ -42,7 +42,6 @@ jobs:
           elif [ "${{ github.event.schedule }}" = "47 6 * * 1-5" ]; then RUN="mattina --se-manca"
           else RUN=mattina; fi
           python lavoro.py $RUN
-          case "$RUN" in mattina*) python radar.py || echo "Radar non riuscito (i dati di mercato restano)";; esac
       - name: Pubblica
         run: |
           git config user.name "dati-mercato"

@@ -1,0 +1,30 @@
+name: Radar dei titoli piu' forti
+
+on:
+  schedule:
+    - cron: "41 5 * * 1-5"    # dopo i dati del mattino; separato apposta: non tocca mai previsioni e notizie
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  radar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Calcolo
+        run: python radar.py
+      - name: Pubblica
+        run: |
+          git config user.name "dati-mercato"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/radar.json data/radar_storico.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Radar $(date -u +%Y-%m-%dT%H:%MZ)"
+          for i in 1 2 3 4 5; do git pull --rebase -q && git push -q && exit 0; sleep $((i * 5)); done
+          exit 1
