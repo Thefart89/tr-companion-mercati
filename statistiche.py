@@ -23,6 +23,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+import figure
 from fonti import charts, rome
 
 HERE = Path(__file__).parent
@@ -259,12 +260,19 @@ def run(out: Path) -> None:
                    "tendenza": {v: riassumi(x["tendenza"][v]) for v in ("giu", "su")},
                    "tecnici": {k: riassumi(x["tecnici"][k]) for k in TECNICI}}
               for cl, x in per_classe.items()}
+    # figure grafiche: prova storica su tutti i titoli dei tre indici (5 anni, giornaliero)
+    gruppo = {m["s"]: g for g, v in uni.items() if isinstance(v, dict) and "members" in v for m in v["members"]}
+    t1 = time.time()
+    DF = {**{s: D5[s] for s in gruppo if s in D5}, **charts([s for s in gruppo if s not in D5], "5y", "1d")}
+    fig = figure.misura({s: d for s, d in DF.items() if d.get("c")}, gruppo)
+    print(f"Figure grafiche: {fig['tutte']['n'] if fig.get('tutte') else 0} rotture su {len(DF)} titoli ({time.time() - t1:.0f}s)")
     out.mkdir(parents=True, exist_ok=True)
     (out / "statistiche.json").write_text(json.dumps({
         "generated": time.time(), "periodo": {"giornata": "2 anni, barre da 1 ora", "scatto": "60 giorni, barre da 15 minuti",
                                              "tendenza": "5 anni, dati giornalieri", "avverso": "2 anni, dati giornalieri",
-                                             "tecnici": "5 anni, dati giornalieri"},
-        "classi": classi, "simboli": simboli}, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+                                             "tecnici": "5 anni, dati giornalieri",
+                                             "figure": "5 anni, dati giornalieri, titoli di FTSE MIB, Euro Stoxx 50 e S&P 500"},
+        "classi": classi, "simboli": simboli, "figure": fig}, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(f"Fatto: {len(simboli)} strumenti in {time.time() - t0:.0f}s")
 
 

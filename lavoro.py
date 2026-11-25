@@ -20,6 +20,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import figure
 import ia
 import notizie
 import previsioni
@@ -82,6 +83,22 @@ def run(kind: str, out: Path, use_ia: bool) -> None:
             indices[s] = a
     gmeta = {g: {"name": uni[g]["name"], "index": uni[g]["index"], "cur": uni[g]["cur"]} for g in uni}
     save(out / "titoli.json", {"generated": now, "run": kind, "groups": gmeta, "indices": indices, "symbols": stocks})
+
+    # ---------- figure grafiche (grafico giornaliero, solo sedute chiuse) ----------
+    figs = load(out / "figure.json", {}).get("figure", {}) if kind == "sera" else {}
+    for s, d in raw.items():
+        try:
+            f = figure.per_simbolo(d, now)
+        except Exception as e:  # una serie strana non deve fermare il calcolo
+            print("figure", s, e)
+            continue
+        if f:
+            figs[s] = f
+        else:
+            figs.pop(s, None)
+    prova = load(out / "statistiche.json", {}).get("figure")      # prova storica (aggiornata il sabato)
+    save(out / "figure.json", {"generated": now, "figure": figs, "prova": prova})
+    print(f"Figure grafiche: {sum(len(x) for x in figs.values())} su {len(figs)} titoli")
 
     # ---------- volumi anomali (ultima seduta chiusa) ----------
     anom = sorted((dict(s=s, **{k: x.get(k) for k in ("n", "g", "vr", "vol", "vavg60", "ch1", "c", "d", "cur")})
