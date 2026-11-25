@@ -1,0 +1,32 @@
+name: Strategie (rimbalzo degli indici)
+
+on:
+  schedule:
+    - cron: "50 16 * * 1-5"   # dopo la chiusura delle borse europee
+    - cron: "50 21 * * 1-5"   # dopo la chiusura di Wall Street
+    - cron: "35 5 * * 2-6"    # riserva del mattino
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  strategie:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Calcolo
+        run: python strategie.py
+      - name: Pubblica
+        run: |
+          git config user.name "dati-mercato"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/strategie.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Strategie $(date -u +%Y-%m-%dT%H:%MZ)"
+          for i in 1 2 3 4 5; do git pull --rebase -q && git push -q && exit 0; sleep $((i * 5)); done
+          exit 1
