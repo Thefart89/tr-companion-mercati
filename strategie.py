@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fonti import get, rome
+import turbo_sim
 from tecnica import session_complete
 
 HERE = Path(__file__).parent
@@ -32,7 +33,6 @@ INDICI = {"^GSPC": "S&P 500", "^NDX": "Nasdaq 100", "^DJI": "Dow Jones", "^GDAXI
           "FTSEMIB.MI": "FTSE MIB", "^FCHI": "CAC 40"}
 K, SOGLIA, MAX_SED = 2, 10, 10
 INIZIO_VERIFICA = "2026-11-25"       # da qui in poi le operazioni contano come "verifica dal vivo"
-MANTENIMENTO, COSTI = 0.106, 0.005   # turbo: 10,6% l'anno sulla parte finanziata; spread + 2 commissioni ~0,5%
 
 
 def serie(s: str) -> dict | None:
@@ -133,10 +133,26 @@ def a_caso(d: dict, sed: int = 4) -> tuple[float, float]:
     return (stt.mean(R), sum(v > 0 for v in R) / len(R)) if R else (0.0, 0.0)
 
 
-def con_leva(ops: list[dict], L: float) -> dict:
-    v = [-100.0 if o["mae"] <= -1 / L else (L * o["ris"] - MANTENIMENTO * (L - 1) * o["sed"] * 1.4 / 365 - COSTI) * 100 for o in ops]
-    return {"leva": L, "media": round(stt.mean(v), 2), "pos": round(sum(x > 0 for x in v) / len(v) * 100, 1),
-            "ko": sum(x == -100 for x in v), "n": len(v)}
+def con_leva(D: dict, OPS: dict, tassi: dict, L: float, fs: float | None = None, solo_future: bool = False, dal: str | None = None,
+             solo_usa: bool = False) -> dict | None:
+    """Simulazione del turbo (turbo_sim): strike che sale ogni giorno di calendario con il tasso storico + spread,
+    barriera sul minimo dal giorno d'ingresso, margine 0,5%. solo_future: indici USA con la barriera sul future (24 ore)."""
+    vecchio = turbo_sim.FS
+    if fs is not None:
+        turbo_sim.FS = fs
+    R = []
+    try:
+        for s, ops in OPS.items():
+            if (solo_future or solo_usa) and s not in turbo_sim.FUTURE:
+                continue
+            fl = turbo_sim.minimi_future(D[s], D.get(turbo_sim.FUTURE[s])) if solo_future else None
+            for op in ops:
+                if dal and turbo_sim.giorno(D[s]["t"][op["ingresso"]]) < dal:
+                    continue
+                R.append(turbo_sim.simula(D[s], op, L, tassi["EUR" if s in turbo_sim.EURO else "USD"], turbo_sim.BUF, fl))
+    finally:
+        turbo_sim.FS = vecchio
+    return turbo_sim.riassumi(R, L)
 
 
 def trend_prova(d: dict) -> dict:
@@ -200,13 +216,23 @@ def run(out: Path) -> None:
     now = time.time()
     with ThreadPoolExecutor(4) as ex:
         D = dict(zip(INDICI, ex.map(serie, INDICI)))
+    with ThreadPoolExecutor(4) as ex:
+        X = dict(zip(["^IRX"] + list(turbo_sim.FUTURE.values()), ex.map(serie, ["^IRX"] + list(turbo_sim.FUTURE.values()))))
+    usd = turbo_sim.tassi_usd(X.get("^IRX"))
+    tassi = {"USD": turbo_sim.Tassi(usd), "EUR": turbo_sim.Tassi(turbo_sim.tassi_eur(get), usd)}
     righe = [stato(s, d, now) for s, d in D.items() if d]
+    OPS = {x["s"]: x["_ops"] for x in righe}
+    DD = {**{s: d for s, d in D.items() if d}, **{s: d for s, d in X.items() if d}}
     tutte = [o for x in righe for o in x.pop("_ops")]
     base = [a_caso(D[x["s"]], 4) for x in righe]
     res = {"generated": now, "regola": {"k": K, "soglia": SOGLIA, "max_sedute": MAX_SED, "inizio_verifica": INIZIO_VERIFICA},
            "indici": righe,
            "prova": riassunto(tutte, (stt.mean(b[0] for b in base), stt.mean(b[1] for b in base))),
-           "leva": [con_leva(tutte, L) for L in (2, 3, 5, 8, 10)]}
+           "leva": [x for x in (con_leva(DD, OPS, tassi, L) for L in (3, 5, 8, 10)) if x],
+           "leva_costosa": [x for x in (con_leva(DD, OPS, tassi, L, fs=0.08) for L in (3, 5, 8, 10)) if x],
+           "usa_dal_2000": {"indice": [con_leva(DD, OPS, tassi, L, dal="2000-10-01", solo_usa=True) for L in (5, 8, 10)],
+                            "future": [con_leva(DD, OPS, tassi, L, solo_future=True, dal="2000-10-01") for L in (5, 8, 10)]},
+           "sim": {"fs": turbo_sim.FS, "buf": turbo_sim.BUF, "costi": turbo_sim.COSTI}}
     out.mkdir(parents=True, exist_ok=True)
     (out / "strategie.json").write_text(json.dumps(res, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(f"Strategie: {len(righe)} indici, {len(tutte)} operazioni storiche; segnali: "
